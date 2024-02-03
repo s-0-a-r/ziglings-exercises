@@ -39,7 +39,7 @@ pub fn main() void {
 
     const pi: u32 = 314159;
 
-    const negative_eleven: u8 = -11;
+    const negative_eleven: i8 = -11;
 
     // There are no errors in the next line, just explanation:
     // Perhaps you noticed before that the print function takes two
