@@ -37,7 +37,7 @@ pub fn main() void {
     const n: u8 = 50;
     const n_added: u8 = n + 5;
 
-    const pi: u8 = 314159;
+    const pi: u32 = 314159;
 
     const negative_eleven: u8 = -11;
 
