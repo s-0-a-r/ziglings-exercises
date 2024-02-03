@@ -35,7 +35,7 @@ const std = @import("std");
 
 pub fn main() void {
     const n: u8 = 50;
-    n = n + 5;
+    const n_added: u8 = n + 5;
 
     const pi: u8 = 314159;
 
@@ -47,5 +47,5 @@ pub fn main() void {
     // is a string. The string may contain placeholders '{}', and the
     // second parameter is an "anonymous list literal" (don't worry
     // about this for now!) with the values to be printed.
-    std.debug.print("{} {} {}\n", .{ n, pi, negative_eleven });
+    std.debug.print("{} {} {}\n", .{ n_added, pi, negative_eleven });
 }
