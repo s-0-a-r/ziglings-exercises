@@ -15,7 +15,7 @@ const print = std.debug.print;
 //     1) Getting Started
 //     2) Version Changes
 comptime {
-    const required_zig = "0.12.0-dev.2043";
+    const required_zig = "0.14.0-dev.1573";
     const current_zig = builtin.zig_version;
     const min_zig = std.SemanticVersion.parse(required_zig) catch unreachable;
     if (current_zig.order(min_zig) == .lt) {
@@ -103,6 +103,8 @@ const Mode = enum {
     normal,
     /// Named build mode: `zig build -Dn=n`
     named,
+    /// Random build mode: `zig build -Drandom`
+    random,
 };
 
 pub const logo =
@@ -118,8 +120,10 @@ pub const logo =
     \\
 ;
 
+const progress_filename = ".progress.txt";
+
 pub fn build(b: *Build) !void {
-    if (!validate_exercises()) std.os.exit(2);
+    if (!validate_exercises()) std.process.exit(2);
 
     use_color_escapes = false;
     if (std.io.getStdErr().supportsAnsiEscapeCodes()) {
@@ -158,6 +162,9 @@ pub fn build(b: *Build) !void {
         false;
     const override_healed_path = b.option([]const u8, "healed-path", "Override healed path");
     const exno: ?usize = b.option(usize, "n", "Select exercise");
+    const rand: ?bool = b.option(bool, "random", "Select random exercise");
+    const start: ?usize = b.option(usize, "s", "Start at exercise");
+    const reset: ?bool = b.option(bool, "reset", "Reset exercise progress");
 
     const sep = std.fs.path.sep_str;
     const healed_path = if (override_healed_path) |path|
@@ -172,7 +179,7 @@ pub fn build(b: *Build) !void {
         // Named build mode: verifies a single exercise.
         if (n == 0 or n > exercises.len - 1) {
             print("unknown exercise number: {}\n", .{n});
-            std.os.exit(2);
+            std.process.exit(2);
         }
         const ex = exercises[n - 1];
 
@@ -191,17 +198,108 @@ pub fn build(b: *Build) !void {
         return;
     }
 
+    if (rand) |_| {
+        // Random build mode: verifies one random exercise.
+        // like for 'exno' but chooses a random exersise number.
+        print("work in progress: check a random exercise\n", .{});
+
+        var prng = std.Random.DefaultPrng.init(blk: {
+            var seed: u64 = undefined;
+            try std.posix.getrandom(std.mem.asBytes(&seed));
+            break :blk seed;
+        });
+        const rnd = prng.random();
+        const ex = exercises[rnd.intRangeLessThan(usize, 0, exercises.len)];
+
+        print("random exercise: {s}\n", .{ex.main_file});
+
+        const zigling_step = b.step(
+            "random",
+            b.fmt("Check the solution of {s}", .{ex.main_file}),
+        );
+        b.default_step = zigling_step;
+        zigling_step.dependOn(&header_step.step);
+        const verify_step = ZiglingStep.create(b, ex, work_path, .random);
+        verify_step.step.dependOn(&header_step.step);
+        zigling_step.dependOn(&verify_step.step);
+        return;
+    }
+
+    if (start) |s| {
+        if (s == 0 or s > exercises.len - 1) {
+            print("unknown exercise number: {}\n", .{s});
+            std.process.exit(2);
+        }
+        const first = exercises[s - 1];
+        const ziglings_step = b.step("ziglings", b.fmt("Check ziglings starting with {s}", .{first.main_file}));
+        b.default_step = ziglings_step;
+
+        var prev_step = &header_step.step;
+        for (exercises[(s - 1)..]) |ex| {
+            const verify_stepn = ZiglingStep.create(b, ex, work_path, .normal);
+            verify_stepn.step.dependOn(prev_step);
+
+            prev_step = &verify_stepn.step;
+        }
+        ziglings_step.dependOn(prev_step);
+        return;
+    }
+
+    if (reset) |_| {
+        std.fs.cwd().deleteFile(progress_filename) catch |err| {
+            switch (err) {
+                std.fs.Dir.DeleteFileError.FileNotFound => {},
+                else => {
+                    print("Unable to remove progress file, Error: {}\n", .{err});
+                    return err;
+                },
+            }
+        };
+
+        print("Progress reset, {s} removed.\n", .{progress_filename});
+        std.process.exit(0);
+    }
+
     // Normal build mode: verifies all exercises according to the recommended
     // order.
     const ziglings_step = b.step("ziglings", "Check all ziglings");
     b.default_step = ziglings_step;
 
     var prev_step = &header_step.step;
-    for (exercises) |ex| {
-        const verify_stepn = ZiglingStep.create(b, ex, work_path, .normal);
-        verify_stepn.step.dependOn(prev_step);
 
-        prev_step = &verify_stepn.step;
+    var starting_exercise: u32 = 0;
+
+    if (std.fs.cwd().openFile(progress_filename, .{})) |progress_file| {
+        defer progress_file.close();
+
+        const progress_file_size = try progress_file.getEndPos();
+
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
+        const contents = try progress_file.readToEndAlloc(allocator, progress_file_size);
+        defer allocator.free(contents);
+
+        starting_exercise = try std.fmt.parseInt(u32, contents, 10);
+    } else |err| {
+        switch (err) {
+            std.fs.File.OpenError.FileNotFound => {
+                // This is fine, may be the first time tests are run or progress have been reset
+            },
+            else => {
+                print("Unable to open {s}: {}\n", .{ progress_filename, err });
+                return err;
+            },
+        }
+    }
+
+    for (exercises) |ex| {
+        if (starting_exercise < ex.number()) {
+            const verify_stepn = ZiglingStep.create(b, ex, work_path, .normal);
+            verify_stepn.step.dependOn(prev_step);
+
+            prev_step = &verify_stepn.step;
+        }
     }
     ziglings_step.dependOn(prev_step);
 
@@ -244,10 +342,10 @@ const ZiglingStep = struct {
         return self;
     }
 
-    fn make(step: *Step, prog_node: *std.Progress.Node) !void {
+    fn make(step: *Step, options: Step.MakeOptions) !void {
         // NOTE: Using exit code 2 will prevent the Zig compiler to print the message:
         // "error: the following build command failed with exit code 1:..."
-        const self = @fieldParentPtr(ZiglingStep, "step", step);
+        const self: *ZiglingStep = @alignCast(@fieldParentPtr("step", step));
 
         if (self.exercise.skip) {
             print("Skipping {s}\n\n", .{self.exercise.main_file});
@@ -255,31 +353,31 @@ const ZiglingStep = struct {
             return;
         }
 
-        const exe_path = self.compile(prog_node) catch {
+        const exe_path = self.compile(options.progress_node) catch {
             self.printErrors();
 
             if (self.exercise.hint) |hint|
                 print("\n{s}Ziglings hint: {s}{s}", .{ bold_text, hint, reset_text });
 
             self.help();
-            std.os.exit(2);
+            std.process.exit(2);
         };
 
-        self.run(exe_path.?, prog_node) catch {
+        self.run(exe_path, options.progress_node) catch {
             self.printErrors();
 
             if (self.exercise.hint) |hint|
                 print("\n{s}Ziglings hint: {s}{s}", .{ bold_text, hint, reset_text });
 
             self.help();
-            std.os.exit(2);
+            std.process.exit(2);
         };
 
         // Print possible warning/debug messages.
         self.printErrors();
     }
 
-    fn run(self: *ZiglingStep, exe_path: []const u8, _: *std.Progress.Node) !void {
+    fn run(self: *ZiglingStep, exe_path: []const u8, _: std.Progress.Node) !void {
         resetLine();
         print("Checking: {s}\n", .{self.exercise.main_file});
 
@@ -352,6 +450,18 @@ const ZiglingStep = struct {
             , .{ red, reset, exercise_output, red, reset, output, red, reset });
         }
 
+        const progress = try std.fmt.allocPrint(b.allocator, "{d}", .{self.exercise.number()});
+        defer b.allocator.free(progress);
+
+        const file = try std.fs.cwd().createFile(
+            progress_filename,
+            .{ .read = true, .truncate = true },
+        );
+        defer file.close();
+
+        try file.writeAll(progress);
+        try file.sync();
+
         print("{s}PASSED:\n{s}{s}\n\n", .{ green_text, output, reset_text });
     }
 
@@ -375,7 +485,7 @@ const ZiglingStep = struct {
         print("{s}PASSED{s}\n\n", .{ green_text, reset_text });
     }
 
-    fn compile(self: *ZiglingStep, prog_node: *std.Progress.Node) !?[]const u8 {
+    fn compile(self: *ZiglingStep, prog_node: std.Progress.Node) ![]const u8 {
         print("Compiling: {s}\n", .{self.exercise.main_file});
 
         const b = self.step.owner;
@@ -386,7 +496,7 @@ const ZiglingStep = struct {
         var zig_args = std.ArrayList([]const u8).init(b.allocator);
         defer zig_args.deinit();
 
-        zig_args.append(b.zig_exe) catch @panic("OOM");
+        zig_args.append(b.graph.zig_exe) catch @panic("OOM");
 
         const cmd = switch (self.exercise.kind) {
             .exe => "build-exe",
@@ -406,7 +516,21 @@ const ZiglingStep = struct {
 
         zig_args.append("--listen=-") catch @panic("OOM");
 
-        return try self.step.evalZigProcess(zig_args.items, prog_node);
+        //
+        // NOTE: After many changes in zig build system, we need to create the cache path manually.
+        // See https://github.com/ziglang/zig/pull/21115
+        // Maybe there is a better way (in the future).
+        const exe_dir = try self.step.evalZigProcess(zig_args.items, prog_node, false);
+        const exe_name = switch (self.exercise.kind) {
+            .exe => self.exercise.name(),
+            .@"test" => "test",
+        };
+        const sep = std.fs.path.sep_str;
+        const root_path = exe_dir.?.root_dir.path.?;
+        const sub_path = exe_dir.?.subPathOrDot();
+        const exe_path = b.fmt("{s}{s}{s}{s}{s}", .{ root_path, sep, sub_path, sep, exe_name });
+
+        return exe_path;
     }
 
     fn help(self: *ZiglingStep) void {
@@ -417,6 +541,7 @@ const ZiglingStep = struct {
         const cmd = switch (self.mode) {
             .normal => "zig build",
             .named => b.fmt("zig build -Dn={s}", .{key}),
+            .random => "zig build -Drandom",
         };
 
         print("\n{s}Edit exercises/{s} and run '{s}' again.{s}\n", .{
@@ -459,7 +584,7 @@ fn resetLine() void {
 pub fn trimLines(allocator: std.mem.Allocator, buf: []const u8) ![]const u8 {
     var list = try std.ArrayList(u8).initCapacity(allocator, buf.len);
 
-    var iter = std.mem.split(u8, buf, " \n");
+    var iter = std.mem.splitSequence(u8, buf, " \n");
     while (iter.next()) |line| {
         // TODO: trimming CR characters is probably not necessary.
         const data = std.mem.trimRight(u8, line, " \r");
@@ -494,9 +619,8 @@ const PrintStep = struct {
         return self;
     }
 
-    fn make(step: *Step, _: *std.Progress.Node) !void {
-        const self = @fieldParentPtr(PrintStep, "step", step);
-
+    fn make(step: *Step, _: Step.MakeOptions) !void {
+        const self: *PrintStep = @alignCast(@fieldParentPtr("step", step));
         print("{s}", .{self.message});
     }
 };
@@ -522,7 +646,7 @@ fn validate_exercises() bool {
             return false;
         }
 
-        var iter = std.mem.split(u8, ex.output, "\n");
+        var iter = std.mem.splitScalar(u8, ex.output, '\n');
         while (iter.next()) |line| {
             const output = std.mem.trimRight(u8, line, " \r");
             if (output.len != line.len) {
@@ -839,7 +963,7 @@ const exercises = [_]Exercise{
     },
     .{
         .main_file = "060_floats.zig",
-        .output = "Shuttle liftoff weight: 2032092kg",
+        .output = "Shuttle liftoff weight: 2032kg",
     },
     .{
         .main_file = "061_coercions.zig",
@@ -905,6 +1029,7 @@ const exercises = [_]Exercise{
     .{
         .main_file = "074_comptime9.zig",
         .output = "My llama value is 2.",
+        .skip = true,
     },
     .{
         .main_file = "075_quiz8.zig",
@@ -939,7 +1064,7 @@ const exercises = [_]Exercise{
     .{
         .main_file = "082_anonymous_structs3.zig",
         .output =
-        \\"0"(bool):true "1"(bool):false "2"(i32):42 "3"(f32):3.14159202e+00
+        \\"0"(bool):true "1"(bool):false "2"(i32):42 "3"(f32):3.141592e0
         ,
         .hint = "This one is a challenge! But you have everything you need.",
     },
@@ -1102,6 +1227,77 @@ const exercises = [_]Exercise{
         \\despair
         \\This little poem has 15 words!
         ,
+    },
+    .{
+        .main_file = "104_threading.zig",
+        .output =
+        \\Starting work...
+        \\thread 1: started.
+        \\thread 2: started.
+        \\thread 3: started.
+        \\Some weird stuff, after starting the threads.
+        \\thread 2: finished.
+        \\thread 1: finished.
+        \\thread 3: finished.
+        \\Zig is cool!
+        ,
+    },
+    .{
+        .main_file = "105_threading2.zig",
+        .output = "PI ≈ 3.14159265",
+    },
+    .{
+        .main_file = "106_files.zig",
+        .output = "Successfully wrote 18 bytes.",
+    },
+    .{
+        .main_file = "107_files2.zig",
+        .output =
+        \\AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        \\Successfully Read 18 bytes: It's zigling time!
+        ,
+    },
+    .{
+        .main_file = "108_labeled_switch.zig",
+        .output = "The pull request has been merged.",
+    },
+    .{
+        .main_file = "109_vectors.zig",
+        .output =
+        \\Max difference (old fn): 0.014
+        \\Max difference (new fn): 0.014
+        ,
+    },
+    .{ .main_file = "110_quiz9.zig", .output = 
+    \\Toggle pins with XOR on PORTB
+    \\-----------------------------
+    \\  1100 // (initial state of PORTB)
+    \\^ 0101 // (bitmask)
+    \\= 1001
+    \\
+    \\  1100 // (initial state of PORTB)
+    \\^ 0011 // (bitmask)
+    \\= 1111
+    \\
+    \\Set pins with OR on PORTB
+    \\-------------------------
+    \\  1001 // (initial state of PORTB)
+    \\| 0100 // (bitmask)
+    \\= 1101
+    \\
+    \\  1001 // (reset state)
+    \\| 0100 // (bitmask)
+    \\= 1101
+    \\
+    \\Clear pins with AND and NOT on PORTB
+    \\------------------------------------
+    \\  1110 // (initial state of PORTB)
+    \\& 1011 // (bitmask)
+    \\= 1010
+    \\
+    \\  0111 // (reset state)
+    \\& 1110 // (bitmask)
+    \\= 0110
     },
     .{
         .main_file = "999_the_end.zig",
