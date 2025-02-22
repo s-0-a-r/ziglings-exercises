@@ -8,27 +8,29 @@ cd ../
 git clone https://codeberg.org/ziglings/exercises.git
 cd exercises
 
-# Set the remote to your fork
+# Set the remote to this fork
 git remote -v # should show origin https://codeberg.org/ziglings/exercises.git
 git remote set-url origin https://github.com/s-0-a-r/ziglings-exercises.git
 git remote -v # should show origin https://github.com/s-0-a-r/ziglings-exercises.git
 
-# Create a new branch from the original branch
-git switch -c original-branch
+# Create a new branch
+git switch -c original-repository
 
-# Push the branch to your fork
-git push -f origin original-branch
+# Push the branch to this fork
+git push -f origin original-repository
 
-# Switch back to your branch
+# Switch back to this fork
 cd ../ziglings-exercises
+git switch main
 git fetch
-git switch -c merged-original-branch
+git reset --hard origin/main
+git switch -c merge-original-repository
 
-# Merge the original branch into your branch
-git merge origin/original-branch
+# Merge the original repository into this fork
+git merge origin/original-repository
 
-# Push the merged branch to your fork
-git push -u origin merged-original-branch
+# Push the merged repository to this fork
+git push -u origin merge-original-repository
 ```
 
 ## Create a pull request
