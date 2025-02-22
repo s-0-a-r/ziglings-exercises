@@ -21,11 +21,13 @@ git push -f origin original-branch
 
 # Switch back to your branch
 cd ../ziglings-exercises
+git switch main
 git fetch
-git switch -c rebase-original-branch
+git reset --hard origin/main
 
 # Rebase the original branch into your branch
-git rebase -i original-branch
+git switch -c rebase-original-branch
+git rebase -i origin/original-branch
 
 # Push the rebased branch to your fork
 git push -u origin rebase-original-branch
