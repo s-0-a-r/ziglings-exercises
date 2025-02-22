@@ -40,6 +40,7 @@ fit for one reason or another.
 
 ## Platforms and Zig Versions
 
+
 Because it uses the Zig build system, Ziglings should work
 wherever Zig does.
 
@@ -54,13 +55,12 @@ Ziglings. Please file an issue...or make a pull request!
 
 ## Formatting
 
-All exercises should conform to `zig fmt`. I often forget to do
-this.
+All exercises should conform to `zig fmt`.
 
 
 ## Pull Request Workflow
 
-Ziglings uses the "standard" Github workflow as guided by the Web
+Ziglings uses the "standard" Codeberg workflow as guided by the Web
 interface.  Specifically:
 
 * Fork this repository
@@ -71,9 +71,18 @@ interface.  Specifically:
       `git push origin my-branch`
 * Create a pull request from your branch to `ziglings/main`
 * Your faithful Ziglings maintainers will take a look at your
-  request ASAP (we don't talk about May-July 2022, LOL)
+  request ASAP (we don't talk about May-July, LOL)
 * Once the changes are reviewed, your request will be merged and
   eternal Ziglings contributor glory is yours!
+
+
+## Licence
+
+If you submit your contribution to the repository/project,
+you agree that your contribution will be licensed under
+the license of this repository/this project.
+Please note, it does not change your rights to use your own
+contribution for any other purpose.
 
 
 ## The Secrets
